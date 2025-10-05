@@ -25,10 +25,13 @@ export const Auth = ({ onSuccess }: AuthProps) => {
         const { error } = await supabase.auth.signUp({
           email,
           password,
+          options: {
+            emailRedirectTo: `${window.location.origin}/`,
+          }
         });
         if (error) throw error;
-        toast.success("Account created! You can now sign in.");
-        setIsSignUp(false);
+        toast.success("Account created! Signing you in...");
+        onSuccess();
       } else {
         const { error } = await supabase.auth.signInWithPassword({
           email,

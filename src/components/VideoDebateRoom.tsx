@@ -39,27 +39,40 @@ export const VideoDebateRoom = ({ sessionId, topic, duration, onEnd, onReport }:
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Initialize media
+  // Initialize media only when component mounts
   useEffect(() => {
+    let mounted = true;
+    
     const initMedia = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: true,
           audio: true
         });
-        setLocalStream(stream);
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
+        if (mounted) {
+          setLocalStream(stream);
+          if (localVideoRef.current) {
+            localVideoRef.current.srcObject = stream;
+          }
+        } else {
+          // If unmounted before stream obtained, stop tracks
+          stream.getTracks().forEach(track => track.stop());
         }
       } catch (error) {
         console.error("Error accessing media devices:", error);
-        toast.error("Could not access camera/microphone");
+        if (mounted) {
+          toast.error("Could not access camera/microphone");
+        }
       }
     };
+    
     initMedia();
 
     return () => {
-      localStream?.getTracks().forEach(track => track.stop());
+      mounted = false;
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+      }
     };
   }, []);
 
@@ -158,6 +171,11 @@ export const VideoDebateRoom = ({ sessionId, topic, duration, onEnd, onReport }:
   };
 
   const handleEndDebate = async () => {
+    // Stop all media tracks
+    if (localStream) {
+      localStream.getTracks().forEach(track => track.stop());
+    }
+    
     const { error } = await supabase
       .from("debate_sessions")
       .update({ 
@@ -168,8 +186,11 @@ export const VideoDebateRoom = ({ sessionId, topic, duration, onEnd, onReport }:
       .eq("id", sessionId);
 
     if (!error) {
-      onEnd();
+      toast.success("Debate ended");
     }
+    
+    // Always call onEnd to return to waiting room
+    onEnd();
   };
 
   const handleReport = async () => {
@@ -327,6 +348,7 @@ export const VideoDebateRoom = ({ sessionId, topic, duration, onEnd, onReport }:
             onClick={() => setShowEndDialog(true)}
           >
             <Phone className="h-5 w-5 rotate-[135deg]" />
+            <span className="ml-2">End</span>
           </Button>
         </div>
       </div>

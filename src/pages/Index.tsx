@@ -1,15 +1,14 @@
 import { useState, useEffect } from "react";
-import { AgeGate } from "@/components/AgeGate";
 import { Auth } from "@/components/Auth";
 import { WaitingRoom } from "@/components/WaitingRoom";
 import { VideoDebateRoom } from "@/components/VideoDebateRoom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
-type AppState = "age-gate" | "auth" | "waiting" | "debate";
+type AppState = "auth" | "waiting" | "debate";
 
 const Index = () => {
-  const [state, setState] = useState<AppState>("age-gate");
+  const [state, setState] = useState<AppState>("auth");
   const [user, setUser] = useState<any>(null);
   const [sessionId, setSessionId] = useState<string>("");
   const [topic, setTopic] = useState("Should we adopt universal basic income?");
@@ -19,12 +18,15 @@ const Index = () => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
         setUser(session.user);
-        if (state === "auth") setState("waiting");
+        setState("waiting");
       }
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
+      if (session?.user) {
+        setState("waiting");
+      }
     });
 
     return () => subscription.unsubscribe();
@@ -32,26 +34,18 @@ const Index = () => {
 
   useEffect(() => {
     const fetchTopic = async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("topics")
         .select("topic_text")
         .eq("active", true)
         .order("created_at", { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
       
       if (data) setTopic(data.topic_text);
     };
     fetchTopic();
   }, []);
-
-  const handleAgeConfirm = () => {
-    if (user) {
-      setState("waiting");
-    } else {
-      setState("auth");
-    }
-  };
 
   const handleAuthSuccess = () => {
     setState("waiting");
@@ -63,18 +57,16 @@ const Index = () => {
   };
 
   const handleEndDebate = () => {
+    setSessionId("");
     setState("waiting");
   };
 
   const handleReport = (reason: string) => {
     console.log("Report submitted:", reason);
     toast.success("Report submitted to moderators");
+    setSessionId("");
     setState("waiting");
   };
-
-  if (state === "age-gate") {
-    return <AgeGate onConfirm={handleAgeConfirm} />;
-  }
 
   if (state === "auth") {
     return <Auth onSuccess={handleAuthSuccess} />;
