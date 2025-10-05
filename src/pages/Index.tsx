@@ -1,21 +1,65 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AgeGate } from "@/components/AgeGate";
+import { Auth } from "@/components/Auth";
 import { WaitingRoom } from "@/components/WaitingRoom";
-import { DebateRoom } from "@/components/DebateRoom";
+import { VideoDebateRoom } from "@/components/VideoDebateRoom";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
-type AppState = "age-gate" | "waiting" | "debate" | "ended";
+type AppState = "age-gate" | "auth" | "waiting" | "debate";
 
 const Index = () => {
   const [state, setState] = useState<AppState>("age-gate");
-  const [skipCount, setSkipCount] = useState(0);
+  const [user, setUser] = useState<any>(null);
+  const [sessionId, setSessionId] = useState<string>("");
+  const [topic, setTopic] = useState("Should we adopt universal basic income?");
+
+  useEffect(() => {
+    // Check auth status
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        setUser(session.user);
+        if (state === "auth") setState("waiting");
+      }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const fetchTopic = async () => {
+      const { data } = await supabase
+        .from("topics")
+        .select("topic_text")
+        .eq("active", true)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .single();
+      
+      if (data) setTopic(data.topic_text);
+    };
+    fetchTopic();
+  }, []);
 
   const handleAgeConfirm = () => {
+    if (user) {
+      setState("waiting");
+    } else {
+      setState("auth");
+    }
+  };
+
+  const handleAuthSuccess = () => {
     setState("waiting");
   };
 
-  const handleSkip = () => {
-    setSkipCount((prev) => prev + 1);
-    // In production, implement rate limiting and cooldowns
+  const handleMatched = (newSessionId: string) => {
+    setSessionId(newSessionId);
+    setState("debate");
   };
 
   const handleEndDebate = () => {
@@ -24,6 +68,7 @@ const Index = () => {
 
   const handleReport = (reason: string) => {
     console.log("Report submitted:", reason);
+    toast.success("Report submitted to moderators");
     setState("waiting");
   };
 
@@ -31,30 +76,26 @@ const Index = () => {
     return <AgeGate onConfirm={handleAgeConfirm} />;
   }
 
-  if (state === "waiting") {
-    // Simulate matching after 3 seconds
-    setTimeout(() => {
-      if (state === "waiting") {
-        setState("debate");
-      }
-    }, 3000);
+  if (state === "auth") {
+    return <Auth onSuccess={handleAuthSuccess} />;
+  }
 
+  if (state === "waiting") {
     return (
       <WaitingRoom
-        topic="Should we adopt universal basic income?"
+        topic={topic}
         queuePosition={Math.floor(Math.random() * 10) + 1}
-        onSkip={handleSkip}
-        canSkip={skipCount < 3}
-        skipCooldown={skipCount >= 3 ? 10 : undefined}
+        onMatched={handleMatched}
       />
     );
   }
 
-  if (state === "debate") {
+  if (state === "debate" && sessionId) {
     return (
-      <DebateRoom
-        topic="Should we adopt universal basic income?"
-        duration={600} // 10 minutes
+      <VideoDebateRoom
+        sessionId={sessionId}
+        topic={topic}
+        duration={600}
         onEnd={handleEndDebate}
         onReport={handleReport}
       />

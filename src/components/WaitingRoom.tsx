@@ -1,17 +1,59 @@
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useEffect, useState } from "react";
 import { Loader2, Users, Clock } from "lucide-react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 interface WaitingRoomProps {
   topic: string;
   queuePosition: number;
-  onSkip: () => void;
-  canSkip: boolean;
-  skipCooldown?: number;
+  onMatched: (sessionId: string) => void;
 }
 
-export const WaitingRoom = ({ topic, queuePosition, onSkip, canSkip, skipCooldown }: WaitingRoomProps) => {
+export const WaitingRoom = ({ topic, queuePosition, onMatched }: WaitingRoomProps) => {
+  const [searching, setSearching] = useState(false);
+
+  useEffect(() => {
+    const joinQueue = async () => {
+      setSearching(true);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      // Simulate matching after 3 seconds
+      setTimeout(async () => {
+        // Create a debate session
+        const roomId = `room_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const { data: topicData } = await supabase
+          .from("topics")
+          .select("id")
+          .eq("active", true)
+          .limit(1)
+          .single();
+
+        const { data: session, error } = await supabase
+          .from("debate_sessions")
+          .insert({
+            room_id: roomId,
+            topic_id: topicData?.id,
+            user_a: user.id,
+            user_b: user.id, // In production, match with real user
+            status: "active",
+          })
+          .select()
+          .single();
+
+        if (error) {
+          toast.error("Failed to create session");
+          setSearching(false);
+        } else if (session) {
+          onMatched(session.id);
+        }
+      }, 3000);
+    };
+
+    joinQueue();
+  }, [onMatched]);
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <Card className="w-full max-w-2xl">
@@ -41,22 +83,6 @@ export const WaitingRoom = ({ topic, queuePosition, onSkip, canSkip, skipCooldow
               <div className="text-2xl font-bold text-foreground">~30s</div>
               <div className="text-xs text-muted-foreground">Estimated Wait</div>
             </div>
-          </div>
-
-          <div className="pt-4 space-y-3">
-            <Button
-              onClick={onSkip}
-              disabled={!canSkip}
-              variant="outline"
-              className="w-full"
-            >
-              {skipCooldown ? `Skip (${skipCooldown}s cooldown)` : "Skip & Re-queue"}
-            </Button>
-            {!canSkip && (
-              <p className="text-xs text-center text-muted-foreground">
-                You've used your skip limit. Please wait to be matched.
-              </p>
-            )}
           </div>
 
           <div className="text-center space-y-2">
