@@ -152,14 +152,13 @@ export const VideoDebateRoom = ({ sessionId, topic, duration, onEnd, onReport }:
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
 
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    const username = localStorage.getItem("debate-username") || "Anonymous";
 
     const { error } = await supabase
       .from("messages")
       .insert({
         session_id: sessionId,
-        sender_id: user.id,
+        sender_id: username,
         message_text: inputValue.trim(),
       });
 
@@ -199,30 +198,19 @@ export const VideoDebateRoom = ({ sessionId, topic, duration, onEnd, onReport }:
       return;
     }
 
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    const username = localStorage.getItem("debate-username") || "Anonymous";
 
-    const { data: session } = await supabase
+    await supabase.from("reports").insert({
+      session_id: sessionId,
+      reporter_id: username,
+      reported_user_id: "opponent",
+      reason: reportReason.trim(),
+    });
+
+    await supabase
       .from("debate_sessions")
-      .select("user_a, user_b")
-      .eq("id", sessionId)
-      .single();
-
-    if (session) {
-      const reportedUserId = session.user_a === user.id ? session.user_b : session.user_a;
-      
-      await supabase.from("reports").insert({
-        session_id: sessionId,
-        reporter_id: user.id,
-        reported_user_id: reportedUserId,
-        reason: reportReason.trim(),
-      });
-
-      await supabase
-        .from("debate_sessions")
-        .update({ status: "reported" })
-        .eq("id", sessionId);
-    }
+      .update({ status: "reported" })
+      .eq("id", sessionId);
 
     toast.success("Report submitted");
     setShowReportDialog(false);

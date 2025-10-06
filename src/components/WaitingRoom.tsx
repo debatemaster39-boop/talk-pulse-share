@@ -16,8 +16,7 @@ export const WaitingRoom = ({ topic, queuePosition, onMatched }: WaitingRoomProp
   useEffect(() => {
     const joinQueue = async () => {
       setSearching(true);
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      const username = localStorage.getItem("debate-username") || "Anonymous";
 
       // Simulate matching after 3 seconds
       setTimeout(async () => {
@@ -28,15 +27,15 @@ export const WaitingRoom = ({ topic, queuePosition, onMatched }: WaitingRoomProp
           .select("id")
           .eq("active", true)
           .limit(1)
-          .single();
+          .maybeSingle();
 
         const { data: session, error } = await supabase
           .from("debate_sessions")
           .insert({
             room_id: roomId,
             topic_id: topicData?.id,
-            user_a: user.id,
-            user_b: user.id, // In production, match with real user
+            user_a: username,
+            user_b: "Opponent", // In production, match with real user
             status: "active",
           })
           .select()

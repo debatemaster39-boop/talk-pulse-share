@@ -1,40 +1,29 @@
 import { useState, useEffect } from "react";
-import { Auth } from "@/components/Auth";
+import { UsernameEntry } from "@/components/UsernameEntry";
 import { WaitingRoom } from "@/components/WaitingRoom";
 import { VideoDebateRoom } from "@/components/VideoDebateRoom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
-type AppState = "auth" | "waiting" | "debate";
+type AppState = "username" | "waiting" | "debate";
 
 const Index = () => {
-  const [state, setState] = useState<AppState>("auth");
-  const [user, setUser] = useState<any>(null);
+  const [state, setState] = useState<AppState>("username");
+  const [username, setUsername] = useState<string>("");
   const [sessionId, setSessionId] = useState<string>("");
   const [topic, setTopic] = useState("Should we adopt universal basic income?");
 
   useEffect(() => {
-    // Check auth status
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        setUser(session.user);
-        setState("waiting");
-      }
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        setState("waiting");
-      }
-    });
-
-    return () => subscription.unsubscribe();
+    const storedUsername = localStorage.getItem("debate-username");
+    if (storedUsername) {
+      setUsername(storedUsername);
+      setState("waiting");
+    }
   }, []);
 
   useEffect(() => {
     const fetchTopic = async () => {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from("topics")
         .select("topic_text")
         .eq("active", true)
@@ -47,7 +36,9 @@ const Index = () => {
     fetchTopic();
   }, []);
 
-  const handleAuthSuccess = () => {
+  const handleUsernameSubmit = (name: string) => {
+    setUsername(name);
+    localStorage.setItem("debate-username", name);
     setState("waiting");
   };
 
@@ -68,8 +59,8 @@ const Index = () => {
     setState("waiting");
   };
 
-  if (state === "auth") {
-    return <Auth onSuccess={handleAuthSuccess} />;
+  if (state === "username") {
+    return <UsernameEntry onSubmit={handleUsernameSubmit} />;
   }
 
   if (state === "waiting") {
