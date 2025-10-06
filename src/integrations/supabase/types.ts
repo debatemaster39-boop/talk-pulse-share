@@ -90,6 +90,30 @@ export type Database = {
           },
         ]
       }
+      queue: {
+        Row: {
+          id: string
+          joined_at: string | null
+          status: string | null
+          topic_id: string | null
+          username: string
+        }
+        Insert: {
+          id?: string
+          joined_at?: string | null
+          status?: string | null
+          topic_id?: string | null
+          username: string
+        }
+        Update: {
+          id?: string
+          joined_at?: string | null
+          status?: string | null
+          topic_id?: string | null
+          username?: string
+        }
+        Relationships: []
+      }
       reports: {
         Row: {
           created_at: string | null

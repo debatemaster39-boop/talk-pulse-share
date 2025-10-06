@@ -32,49 +32,177 @@ export const VideoDebateRoom = ({ sessionId, topic, duration, onEnd, onReport }:
   const [reportReason, setReportReason] = useState("");
   
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [videoEnabled, setVideoEnabled] = useState(true);
+  const [peerConnection, setPeerConnection] = useState<RTCPeerConnection | null>(null);
   
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const roomId = localStorage.getItem("current-room-id") || "";
+  const username = localStorage.getItem("debate-username") || "Anonymous";
 
-  // Initialize media only when component mounts
+  // Initialize WebRTC
   useEffect(() => {
     let mounted = true;
+    let pc: RTCPeerConnection | null = null;
     
-    const initMedia = async () => {
+    const initWebRTC = async () => {
       try {
+        // Get local media stream
         const stream = await navigator.mediaDevices.getUserMedia({
           video: true,
           audio: true
         });
-        if (mounted) {
-          setLocalStream(stream);
-          if (localVideoRef.current) {
-            localVideoRef.current.srcObject = stream;
-          }
-        } else {
-          // If unmounted before stream obtained, stop tracks
+        
+        if (!mounted) {
           stream.getTracks().forEach(track => track.stop());
+          return;
         }
+        
+        setLocalStream(stream);
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = stream;
+        }
+
+        // Create peer connection
+        pc = new RTCPeerConnection({
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+          ]
+        });
+        
+        setPeerConnection(pc);
+
+        // Add local tracks to peer connection
+        stream.getTracks().forEach(track => {
+          pc!.addTrack(track, stream);
+        });
+
+        // Handle remote stream
+        pc.ontrack = (event) => {
+          console.log("Received remote track:", event.streams[0]);
+          const remoteStream = event.streams[0];
+          setRemoteStream(remoteStream);
+          if (remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = remoteStream;
+          }
+        };
+
+        // Handle ICE candidates
+        pc.onicecandidate = async (event) => {
+          if (event.candidate) {
+            console.log("Sending ICE candidate");
+            await supabase.from("debate_sessions").update({
+              room_id: `${roomId}_ice_${username}_${Date.now()}`,
+            }).eq("id", sessionId);
+            
+            // Send ICE candidate via messages
+            await supabase.from("messages").insert({
+              session_id: sessionId,
+              sender_id: username,
+              message_text: JSON.stringify({
+                type: 'ice-candidate',
+                candidate: event.candidate
+              })
+            });
+          }
+        };
+
+        // Subscribe to signaling messages
+        const signalingChannel = supabase
+          .channel(`signaling:${roomId}`)
+          .on(
+            "postgres_changes",
+            {
+              event: "INSERT",
+              schema: "public",
+              table: "messages",
+              filter: `session_id=eq.${sessionId}`,
+            },
+            async (payload: any) => {
+              const msg = payload.new.message_text;
+              try {
+                const data = JSON.parse(msg);
+                
+                if (data.type === 'offer' && payload.new.sender_id !== username) {
+                  console.log("Received offer");
+                  await pc!.setRemoteDescription(new RTCSessionDescription(data.offer));
+                  const answer = await pc!.createAnswer();
+                  await pc!.setLocalDescription(answer);
+                  
+                  await supabase.from("messages").insert({
+                    session_id: sessionId,
+                    sender_id: username,
+                    message_text: JSON.stringify({
+                      type: 'answer',
+                      answer: answer
+                    })
+                  });
+                } else if (data.type === 'answer' && payload.new.sender_id !== username) {
+                  console.log("Received answer");
+                  await pc!.setRemoteDescription(new RTCSessionDescription(data.answer));
+                } else if (data.type === 'ice-candidate' && payload.new.sender_id !== username) {
+                  console.log("Received ICE candidate");
+                  await pc!.addIceCandidate(new RTCIceCandidate(data.candidate));
+                }
+              } catch (e) {
+                // Not a signaling message, ignore
+              }
+            }
+          )
+          .subscribe();
+
+        // Check session to determine if we should create offer
+        const { data: session } = await supabase
+          .from("debate_sessions")
+          .select("user_a")
+          .eq("id", sessionId)
+          .single();
+
+        // First user (user_a) creates the offer
+        if (session && session.user_a === username) {
+          console.log("Creating offer as user_a");
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          
+          await supabase.from("messages").insert({
+            session_id: sessionId,
+            sender_id: username,
+            message_text: JSON.stringify({
+              type: 'offer',
+              offer: offer
+            })
+          });
+        }
+
+        return () => {
+          mounted = false;
+          supabase.removeChannel(signalingChannel);
+        };
+        
       } catch (error) {
-        console.error("Error accessing media devices:", error);
+        console.error("Error setting up WebRTC:", error);
         if (mounted) {
-          toast.error("Could not access camera/microphone");
+          toast.error("Could not establish video connection");
         }
       }
     };
     
-    initMedia();
+    initWebRTC();
 
     return () => {
       mounted = false;
       if (localStream) {
         localStream.getTracks().forEach(track => track.stop());
       }
+      if (pc) {
+        pc.close();
+      }
     };
-  }, []);
+  }, [sessionId, roomId]);
 
   // Timer
   useEffect(() => {
@@ -92,7 +220,7 @@ export const VideoDebateRoom = ({ sessionId, topic, duration, onEnd, onReport }:
     return () => clearInterval(timer);
   }, []);
 
-  // Subscribe to messages
+  // Subscribe to chat messages only
   useEffect(() => {
     const fetchMessages = async () => {
       const { data } = await supabase
@@ -101,13 +229,24 @@ export const VideoDebateRoom = ({ sessionId, topic, duration, onEnd, onReport }:
         .eq("session_id", sessionId)
         .order("created_at", { ascending: true });
       
-      if (data) setMessages(data);
+      if (data) {
+        // Filter out signaling messages
+        const chatMessages = data.filter(msg => {
+          try {
+            const parsed = JSON.parse(msg.message_text);
+            return !parsed.type || !['offer', 'answer', 'ice-candidate'].includes(parsed.type);
+          } catch {
+            return true; // Regular text message
+          }
+        });
+        setMessages(chatMessages);
+      }
     };
 
     fetchMessages();
 
     const channel = supabase
-      .channel(`messages:${sessionId}`)
+      .channel(`chat:${sessionId}`)
       .on(
         "postgres_changes",
         {
@@ -117,7 +256,17 @@ export const VideoDebateRoom = ({ sessionId, topic, duration, onEnd, onReport }:
           filter: `session_id=eq.${sessionId}`,
         },
         (payload) => {
-          setMessages((prev) => [...prev, payload.new as Message]);
+          const msg = payload.new as Message;
+          // Filter out signaling messages from chat
+          try {
+            const parsed = JSON.parse(msg.message_text);
+            if (parsed.type && ['offer', 'answer', 'ice-candidate'].includes(parsed.type)) {
+              return;
+            }
+          } catch {
+            // Regular message
+          }
+          setMessages((prev) => [...prev, msg]);
         }
       )
       .subscribe();
@@ -174,6 +323,9 @@ export const VideoDebateRoom = ({ sessionId, topic, duration, onEnd, onReport }:
     if (localStream) {
       localStream.getTracks().forEach(track => track.stop());
     }
+    if (peerConnection) {
+      peerConnection.close();
+    }
     
     const { error } = await supabase
       .from("debate_sessions")
@@ -188,7 +340,7 @@ export const VideoDebateRoom = ({ sessionId, topic, duration, onEnd, onReport }:
       toast.success("Debate ended");
     }
     
-    // Always call onEnd to return to waiting room
+    localStorage.removeItem("current-room-id");
     onEnd();
   };
 

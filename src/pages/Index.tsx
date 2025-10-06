@@ -42,8 +42,9 @@ const Index = () => {
     setState("waiting");
   };
 
-  const handleMatched = (newSessionId: string) => {
+  const handleMatched = (newSessionId: string, roomId: string) => {
     setSessionId(newSessionId);
+    localStorage.setItem("current-room-id", roomId);
     setState("debate");
   };
 
